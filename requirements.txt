@@ -1,0 +1,9 @@
+shapely>=2.0
+geopandas>=0.14
+numpy>=1.24
+pandas>=2.0
+matplotlib>=3.7
+pyproj>=3.6
+rtree>=1.0
+bokeh>=3.0
+plotly>=5.20
