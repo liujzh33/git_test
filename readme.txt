@@ -305,3 +305,115 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun \
   形状不匹配会跳过。部署用 20 维。
   9. finetune.checkpoint_path 指向 checkpoints/88/：你说权重已转走，部署时 ckpt_dir 要指向新的 checkpoint 目录（含 mp_rank_00_model_states.pt 或转换后的 HF 格式）。
   10. 视频帧率：训练数据 10fps，global_downsample_rate=1 保持原帧率，action chunk 16 步 = 1.6s。部署执行频率建议 10Hz，replan_steps 可设 16（执行完整个 chunk 再 replan）或更小。
+
+
+  一、T5 在线编码需要传什么权重？
+  
+  T5 编码器用的是 WAN2.2 自带的 umt5-xxl encoder，跟训练时完全一致。部署端要在线编码，只需传这两个文件：
+
+  ┌─────────────────────────────────┬─────────────────────────────────┬───────┬──────────────────────────────────────────────┐
+  │              文件               │              路径               │ 大小  │                     作用                     │
+  ├─────────────────────────────────┼─────────────────────────────────┼───────┼──────────────────────────────────────────────┤
+  │ models_t5_umt5-xxl-enc-bf16.pth │ Wan2.2-TI2V-5B/ 下              │ 11 GB │ umt5-xxl encoder 权重（bf16）                │
+  ├─────────────────────────────────┼─────────────────────────────────┼───────┼──────────────────────────────────────────────┤
+  │ google/umt5-xxl/ 目录           │ Wan2.2-TI2V-5B/google/umt5-xxl/ │ 21 MB │ tokenizer（spiece.model + tokenizer_config） │
+  └─────────────────────────────────┴─────────────────────────────────┴───────┴──────────────────────────────────────────────┘
+
+  不需要传整个 WAN 5B 模型（那个 20+ GB 的 diffusion 权重是 VAE+DiT，T5 编码用不到）。只要上面这两个，就能在部署端起一个独立的 T5 编码服务。
+
+  加载方式（跟训练时 t5_encode_multigpu.py / precompute_franka_t5.py 完全一致）：
+
+  import sys
+  sys.path.insert(0, "/path/to/Motus_initial_franka/bak")  # 需要 bak/wan/modules/t5.py
+  from wan.modules.t5 import T5EncoderModel
+
+  encoder = T5EncoderModel(
+      text_len=512,                                    # max seq len
+      dtype=torch.bfloat16,
+      device="cuda",
+      checkpoint_path=".../models_t5_umt5-xxl-enc-bf16.pth",
+      tokenizer_path=".../google/umt5-xxl",
+  )
+  # 编码
+  emb = encoder(["你的 instruction 文本"], device)  # 返回 list，每个 [seq_len, 4096]
+  emb = emb[0]  # [seq_len, 4096]
+
+  ---
+  二、在线编码 vs 预编码 .pt，选哪个？
+
+  方案 A：预编码 .pt 传输（推荐先用）
+
+  只需要传 229 个 .pt 文件，共 ~169 MB（去重后），部署端零模型依赖。
+
+  你的数据里：
+  - 436 个 episode，但只有 229 种唯一任务文本
+  - 每个 .pt 是 list[1] of [seq_len, 4096]，seq_len 在 65~112 之间
+  - 436 个 .pt 总共 975 MB，但去重后只有 169 MB
+
+  部署时按 instruction 文本做 hash 查表即可（server_vlm_mask.py 已有这个逻辑：hashlib.md5(instruction.encode()).hexdigest() → 查 t5_embeddings_dir/{hash}.pt）。
+
+  但有限制：只能处理训练时见过的 229 种任务文本。如果真机要执行新任务（文本不在 229 种里），就查不到。
+
+  方案 B：在线 T5 编码（通用，推荐正式部署用）
+
+  传 11GB T5 权重 + 21MB tokenizer，部署端实时编码任意 instruction。
+
+  优点：支持任意新任务文本，不受 229 种限制。
+  代价：需要一张 GPU（bf16 下 umt5-xxl 约 10GB 显存），编码一次约几十毫秒。
+
+  方案 C：两者都传（最稳）
+
+  预编码 .pt 做 cache（命中时省算力），T5 权重做 fallback（新文本实时编码）。server_vlm_mask.py 的逻辑已经支持这个：先查 t5_embeddings_dir，查不到再报错——你只需把"报错"改成"调用在线 T5 编码"。
+
+  ---
+  三、数据里有几种任务？几种 .pt？
+
+  任务统计
+
+  ┌──────────────────────────────┬───────────────────┐
+  │             指标             │       数量        │
+  ├──────────────────────────────┼───────────────────┤
+  │ 总 episode                   │ 436               │
+  ├──────────────────────────────┼───────────────────┤
+  │ 唯一任务文本                 │ 229 种            │
+  ├──────────────────────────────┼───────────────────┤
+  │ 唯一 .pt embedding（去重后） │ 229 个，约 169 MB │
+  ├──────────────────────────────┼───────────────────┤
+  │ 全部 .pt（未去重）           │ 436 个，约 975 MB │
+  └──────────────────────────────┴───────────────────┘
+
+  229 种任务的分类
+
+  所有任务都是单步任务（Use the [left/right] arm to pick up ... and place it ...），没有 First use ... then ... 双步任务（之前看到的双步任务是别的 episode，实际 229 种里都是单步）。
+
+  涉及的物体（14 种）：
+  beige bowl, blue bowl, blue plate, cyan bowl, cyan cup, cyan plate,
+  green bowl, green plate, pink bowl, pink plate, purple bowl, purple plate,
+  white bowl, white plate
+
+  涉及的位置（19 种）：
+  table, floor, left/middle/right side of the table,
+  top shelf of the yellow stand, bottom shelf of the yellow stand,
+  top shelf of the yellow rack, bottom shelf of the yellow rack,
+  on top of the {color} {bowl/plate} (各种组合)
+
+  .pt 文件的 dtype 问题（部署需注意）
+
+  ┌────────────────┬──────┐
+  │     dtype      │ 数量 │
+  ├────────────────┼──────┤
+  │ torch.bfloat16 │ 342  │
+  ├────────────────┼──────┤
+  │ torch.float32  │ 94   │
+  └────────────────┴──────┘
+
+  同样的文本，不同 episode 的 .pt 可能 dtype 不同（94 个 float32 vs 342 个 bfloat16），甚至数值有微小差异（6 种文本的 bfloat16 和 float32 版本 allclose 不过）。这是因为编码时跑了不同批次/GPU。
+
+  部署时模型 preprocess_t5_embeddings 会把 T5 embedding 传给 wan_model.text_embedding 层（4096→3072 线性），该层权重是 bf16/fp32 取决于 WAN 加载方式。建议统一转成 float32 再送模型，避免精度不一致：
+
+  emb = torch.load(pt_path, map_location='cpu')
+  emb = emb[0] if isinstance(emb, list) else emb
+  emb = emb.float()  # 统一 float32
+
+  训练时 collate_fn 里 _process_language_embeddings_batch 会做 batch 内 pad，然后模型 preprocess_t5_embeddings 再 pad 到 512 并通过 text_embedding 层。dtype 不一致在训练时就被混用了（bfloat16 和 float32 的 embedding 在同一 batch
+  里），所以影响不大，但部署时最好统一。
