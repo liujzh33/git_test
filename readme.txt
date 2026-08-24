@@ -16,3 +16,12 @@ python3 /data2/liujingzhi/client_obs_action.py 127.0.0.1 --port 18080 --check-on
 正式传输：
 
 python3 /data2/liujingzhi/client_obs_action.py 127.0.0.1 --port 18080 --hz 10
+
+
+
+CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun \                                                  
+        --nproc_per_node=4 \                                                                                                                                                                                                                   
+        --master_port=28200 \                                                                                                                                                                                                                  
+        train/train_wan_vlm_mask.py \                                                                                                                                                                                                          
+        --deepspeed configs/zero1.json \                                                                                                                                                                                                       
+        --config configs/xinghaitu_wan_vlm_mask.yaml
