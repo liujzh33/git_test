@@ -35,19 +35,11 @@ from data.dataset import create_dataset, collate_fn
 from utils.scheduler import create_scheduler
 from sample import evaluate_model, log_evaluation_metrics
 
-# import random                               
-# import numpy as np 
-# # 设置随机种子
-# seed = 42  # 你可以替换为你需要的数字
-# # PyTorch random seed
-# random.seed(seed)
-# np.random.seed(seed)
-# torch.manual_seed(seed)
-# # For GPU
-# torch.cuda.manual_seed_all(seed)
-# # For determinism on CUDA
-# torch.backends.cudnn.deterministic = True
-# torch.backends.cudnn.benchmark = False
+# Enable TF32 for matmul on Ampere+ GPUs (H200) — significant speedup for linear layers
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
+# Enable cuDNN benchmark to auto-select fastest conv kernels
+torch.backends.cudnn.benchmark = True
 
 logger = logging.getLogger(__name__)
 
@@ -447,6 +439,10 @@ class MotusWanVlmTrainer:
                 if should_save_best:
                     self.save_checkpoint(suffix="_best_action_l2", is_best_checkpoint=True)
 
+                # Ensure model is back in training mode after validation
+                # (evaluate_model may switch to eval mode, causing loss spikes)
+                self.model.train()
+
             # Save checkpoint
             if self.global_step % self.save_interval == 0:
                 self.save_checkpoint()
@@ -543,6 +539,7 @@ def create_model_and_optimizer(config: OmegaConf) -> tuple:
         video_precision=config.model.wan.precision,
         action_state_dim=config.common.state_dim,
         action_dim=config.common.action_dim,
+        action_padding_dims=tuple(config.common.get('action_padding_dims', ())) if hasattr(config.common, 'get') else getattr(config.common, 'action_padding_dims', ()),
         # Action Expert configuration
         action_expert_dim=config.model.action_expert.hidden_size,
         action_expert_ffn_dim_multiplier=config.model.action_expert.ffn_dim_multiplier,
@@ -617,7 +614,8 @@ def create_model_and_optimizer(config: OmegaConf) -> tuple:
     optimizer = torch.optim.AdamW(
         param_groups,
         weight_decay=config.training.weight_decay,
-        betas=(0.9, 0.95)
+        betas=(0.9, 0.95),
+        fused=True
     )
 
     # Scheduler

@@ -1,0 +1,120 @@
+# 7-phase Long-Stack training config - subtask + progress
+# Same as 7phase_subtask_only but with progress detection enabled
+#
+# GPU 0-3, script: train_long_stack_di_7phase_gpu0123.sh
+
+common:
+  action_dim: 16
+  state_dim: 16
+  max_action_dim: 16
+  action_padding_dims: [6, 14]
+  num_video_frames: 8
+  video_height: 384
+  video_width: 320
+  global_downsample_rate: 3
+  video_action_freq_ratio: 2
+
+dataset:
+  type: "robotwin_dim16"
+  dataset_dir: "/cache/wx1513998/data/language/long_stack_clip_motus_7phase"
+  data_mode: "both"
+  task_mode: "multi"
+  task_name: ''
+  max_episodes: null
+  image_aug: false
+  subtask_supervision_ratio: 1.0
+
+model:
+  wan:
+    checkpoint_path: "/cache/wx1513998/motus_weights/Wan2.2-TI2V-5B"
+    vae_path: "/cache/wx1513998/motus_weights/Wan2.2-TI2V-5B/Wan2.2_VAE.pth"
+    config_path: "/cache/wx1513998/motus_weights/Wan2.2-TI2V-5B"
+    precision: "bfloat16"
+  vlm:
+    checkpoint_path: "/cache/wx1513998/motus_weights/Qwen3-VL-2B-Instruct"
+    precision: "bfloat16"
+    frozen: false
+  qwen3_expert:
+    vlm_dim: 2048
+    head_dim: 128
+    num_heads: 24
+    num_layers: 30
+    norm_eps: 1e-5
+  action_expert:
+    hidden_size: 1024
+    ffn_dim_multiplier: 4
+    norm_eps: 1e-5
+  time_distribution:
+    timestep_sample_method: "logit_normal"
+    sigmoid_scale: 1.0
+    min_t: 0.0
+    max_t: 1.0
+  training_mode: "finetune"
+  inference:
+    num_inference_timesteps: 10
+  loss_weights:
+    video_loss_weight: 1.0
+    action_loss_weight: 1.0
+
+  subtask_prediction:
+    enabled: true
+    mode: "mot_decoder"
+    loss_weight: 0.5
+    decoder_d_model: 2048
+    decoder_layers: 4
+    decoder_heads: 16
+    decoder_ffn_dim: 8192
+    max_length: 64
+    use_vlm_memory: true
+
+  progress_detection:
+    enabled: true
+    loss_weight: 0.5
+    hidden_dim: 512
+
+  ema:
+    enabled: false
+    update_after_step: 0
+    inv_gamma: 1.0
+    power: 0.75
+    min_value: 0.0
+    max_value: 0.9999
+
+training:
+  batch_size: 8
+  max_steps: 80000
+  learning_rate: 5.0e-5
+  wan_learning_rate: 5.0e-5
+  vlm_learning_rate: 5.0e-5
+  aux_learning_rate: 2.5e-5
+  weight_decay: 0.01
+  gradient_accumulation_steps: 1
+  scheduler_type: "linear"
+  warmup_steps: 200
+  cycle_length: 5000000
+  f_max: 0.99
+  f_min: 0.4
+  grad_clip_norm: 0.5
+  use_amp: true
+  find_unused_parameters: false
+
+resume:
+  checkpoint_path: null
+
+finetune:
+  checkpoint_path: "/cache/wx1513998/motus_weights/pretrain_15w_pytorch_model"
+
+system:
+  checkpoint_dir: "/cache/wx1513998/motus_long_stack_7phase/checkpoints_subtask_progress"
+  log_level: "INFO"
+  log_interval: 50
+  save_interval: 10000
+  val_interval: 500
+  num_workers: 16
+  pin_memory: true
+
+logging:
+  report_to: "tensorboard"
+  wandb_project: "motus-wan-vlm"
+  tensorboard_log_dir: "/cache/wx1513998/motus_long_stack_7phase/tensorboard_subtask_progress"
+  run_name: null
