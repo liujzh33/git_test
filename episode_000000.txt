@@ -1,0 +1,1 @@
+The whole scene is in a realistic, industrial art style with three views: a fixed front camera, a movable left hand camera, and a movable right hand camera. The huawei hdas dual-arm robot is currently performing the following task: Use the left arm to pick up the green bowl from the table and place it on the top shelf of the yellow stand.
