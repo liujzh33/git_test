@@ -1,0 +1,97 @@
+# EAI pick_place (Unitree G1 Dex1, LeRobot v3.0) inference config
+# — 16-dim qpos joint-position action, T-shape stitched cameras.
+#
+# This is the inference-side copy of the training config
+# (MotusV21/MotusV2/configs/eai_pick_place_wan_vlm_mask.yaml).
+# Path fields are modified for the 5090 GPU server deployment.
+#
+# Action / state: 16-dim = [L7, R7, LG, RG] (absolute qpos, radians for
+# joints, continuous for grippers). No normalization (raw qpos).
+# Cameras: cam_left_high (top) + cam_left_wrist (bottom-left) + cam_right_wrist (bottom-right),
+# stitched into a T shape at 384x320. cam_right_high is unused.
+# Stitch geometry (stitch_mode="aspect"): cam_left_high -> 240x320 (full width),
+# wrists -> 120x160 each, 12px pad top + bottom.
+# Action chunk: num_video_frames(8) * video_action_freq_ratio(8) = 64 steps.
+#   global_downsample_rate=1, so action_interp_factor=1 (no interpolation needed).
+#   64 actions @30Hz = 2.13s of motion per chunk.
+
+common:
+  action_dim: 16
+  state_dim: 16
+
+  num_video_frames: 8
+  video_height: 384
+  video_width: 320
+
+  global_downsample_rate: 1
+  video_action_freq_ratio: 8   # action_chunk_size = 64
+
+dataset:
+  type: "g1d"
+  # dataset_dir is not used at inference time (only for training)
+  dataset_dir: ""
+
+  stitch_mode: "aspect"
+
+  t5_mode: "disk_cache"
+  # >>> MODIFY: path to T5 cache on the 5090 server <<<
+  t5_cache_dir: "/home/robo/pretrained_models/t5_cache_eai_pick_place"
+  t5_text_len: 512
+  t5_device: "cuda"
+  allow_t5_cache_miss_zero: false
+
+  max_episodes: null
+  image_aug: false
+
+  params:
+    # >>> MODIFY: root of pretrained models on the 5090 server <<<
+    wan_path: "/home/robo/pretrained_models"
+
+model:
+  wan:
+    # >>> MODIFY: WAN 2.2 path on the 5090 server <<<
+    checkpoint_path: "/home/robo/pretrained_models/Wan2.2-TI2V-5B"
+    config_path: "/home/robo/pretrained_models/Wan2.2-TI2V-5B"
+    vae_path: "/home/robo/pretrained_models/Wan2.2-TI2V-5B/Wan2.2_VAE.pth"
+    precision: "bfloat16"
+
+  vlm:
+    # >>> MODIFY: Qwen3-VL path on the 5090 server <<<
+    checkpoint_path: "/home/robo/pretrained_models/Qwen3-VL-2B-Instruct"
+    precision: "bfloat16"
+    frozen: false
+
+  qwen3_expert:
+    vlm_dim: 2048
+    head_dim: 128
+    num_heads: 24
+    num_layers: 30
+    norm_eps: 1e-5
+
+  action_expert:
+    hidden_size: 1024
+    ffn_dim_multiplier: 4
+    norm_eps: 1e-5
+
+  time_distribution:
+    timestep_sample_method: "logit_normal"
+    sigmoid_scale: 1.0
+    min_t: 0.0
+    max_t: 1.0
+
+  training_mode: "finetune"
+
+  inference:
+    num_inference_timesteps: 10
+
+  loss_weights:
+    video_loss_weight: 1.0
+    action_loss_weight: 1.0
+
+  ema:
+    enabled: false
+    update_after_step: 0
+    inv_gamma: 1.0
+    power: 0.75
+    min_value: 0.0
+    max_value: 0.9999
