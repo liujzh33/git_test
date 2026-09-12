@@ -1,0 +1,45 @@
+所有文件已创建完成。以下是总结：
+新增文件清单
+文件	位置
+docs/deployment_guide_eai_pick_place.md	InferenceMotusV2/docs/
+configs/eai_pick_place_wan_vlm_mask.yaml	InferenceMotusV2/configs/
+scripts/motus_inference_server.py	InferenceMotusV2/scripts/
+scripts/motus_inference_client.py	InferenceMotusV2/scripts/
+scripts/inference_motusv2_server.sh	InferenceMotusV2/scripts/
+scripts/inference_motusv2_client.sh	InferenceMotusV2/scripts/
+回答你的三个问题
+1. 还需要传输哪些代码/文件？
+已传的: Wan2.2-TI2V-5B + Qwen3-VL-2B-Instruct ✅
+还需传到 5090 服务端的:
+文件	本地路径
+模型权重	checkpoints/.../checkpoint_step_10000/pytorch_model/mp_rank_00_model_states.pt
+T5 缓存	data/EAI_DATA/2026-09-11-153200/pick_place_100_ewam/t5_cache/
+InferenceMotusV2 代码包	/home/ma-user/work/wx1513998/InferenceMotusV2/ (含新增文件)
+需要传到机器人端的:
+文件	说明
+motus_inference_client.py	客户端主程序
+inference_motusv2_client.sh	启动脚本
+motusv2_adapter/adapter.py + __init__.py + debug.py	客户端预处理（只需 stitching/interpolation 部分）
+configs/eai_pick_place_wan_vlm_mask.yaml	配置文件（只需 common + stitch_mode 字段）
+unitree_lerobot 仓库	硬件接口（机器人端通常已有）
+不需要传: config.json, pytorch_model_0.bin, optimizer states, random states, zero_to_fp32.py, 数据集（可选传用于初始位姿）
+2. 配置文件对应关系
+训练用的 MotusV21/MotusV2/configs/eai_pick_place_wan_vlm_mask.yaml → 复制到 InferenceMotusV2/configs/eai_pick_place_wan_vlm_mask.yaml，只需修改路径字段（已用 >>> MODIFY 标注），维度和 stitch_mode 等参数必须保持不变。
+关键参数对照：
+- global_downsample_rate: 1 → action_interp_factor: 1（无需插值）
+- video_action_freq_ratio: 8 → chunk_size = 64（每条指令执行 64 步 = 2.13s）
+- stitch_mode: "aspect" → 图片拼接模式必须与训练一致
+- action_mode: "qpos"（默认，不需要 eef_stats.json 和 URDF）
+3. Server/Client 分离架构
+原代码是单进程（eval_g1_motus.py 在一台 GPU 机器上做全部工作），没有现成的服务端/客户端拆分。我已新建了拆分代码：
+服务端 (motus_inference_server.py, 运行在 5090):
+- 加载 MotusV2PolicyAdapter（模型权重 + Wan + VLM + T5）
+- ZMQ REP socket 监听 tcp://0.0.0.0:5555
+- 收到 (first_frame图片, state状态, instruction指令) → 跑 predict_action_chunk → 返回 [64, 16] 动作序列
+客户端 (motus_inference_client.py, 运行在机器人端无 GPU 机器):
+- 通过 unitree_lerobot 采集三视角图片 + 读取关节 state
+- 本地 CPU 做图片拼接 (T-shape 384×320) + state 重排
+- ZMQ REQ 发送到服务端，接收动作序列
+- 本地做插值 + 执行队列管理 + IK + ctrl_dual_arm + 夹爪控制
+- 支持异步双缓冲（worker 线程发推理请求，主线程 30Hz 执行动作）
+启动顺序: 先在 5090 跑 inference_motusv2_server.sh（等模型加载完），再在机器人端跑 inference_motusv2_client.sh。
