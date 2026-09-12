@@ -1,0 +1,130 @@
+# EAI pick_place (Unitree G1 Dex1, LeRobot v3.0) post-training config
+# — 16-dim qpos joint-position action, T-shape stitched cameras.
+#
+# Dataset: /home/ma-user/work/wx1513998/data/EAI_DATA/2026-09-11-153200/pick_place_100_ewam
+# (100 episodes / 150281 frames / 30fps / H.264 / 3 cameras / single task)
+#
+# Action / state: 16-dim = [L7, R7, LG, RG] (absolute qpos, radians for
+# joints, continuous for grippers). No normalization (raw qpos).
+# Cameras: cam_left_high (top) + cam_left_wrist (bottom-left) + cam_right_wrist (bottom-right),
+# stitched into a T shape at 384x320. cam_right_high is unused.
+# Stitch geometry (stitch_mode="aspect"): cam_left_high -> 240x320 (full width),
+# wrists -> 120x160 each, 12px pad top + bottom.
+
+common:
+  action_dim: 16
+  state_dim: 16
+
+  num_video_frames: 8
+  video_height: 384
+  video_width: 320
+
+  global_downsample_rate: 1
+  video_action_freq_ratio: 8   # action_chunk_size = 64
+
+dataset:
+  type: "g1d"
+  dataset_dir: "/home/ma-user/work/wx1513998/data/EAI_DATA/2026-09-11-153200/pick_place_100_ewam"
+
+  stitch_mode: "aspect"
+
+  t5_mode: "disk_cache"
+  t5_cache_dir: "/home/ma-user/work/wx1513998/data/EAI_DATA/2026-09-11-153200/pick_place_100_ewam/t5_cache"
+  t5_text_len: 512
+  t5_device: "cuda"
+  allow_t5_cache_miss_zero: false
+
+  max_episodes: null
+  image_aug: false
+
+  params:
+    wan_path: "/home/ma-user/work/wx1513998/pretrained_models"
+
+model:
+  wan:
+    checkpoint_path: "/home/ma-user/work/wx1513998/pretrained_models/Wan2.2-TI2V-5B"
+    config_path: "/home/ma-user/work/wx1513998/pretrained_models/Wan2.2-TI2V-5B"
+    vae_path: "/home/ma-user/work/wx1513998/pretrained_models/Wan2.2-TI2V-5B/Wan2.2_VAE.pth"
+    precision: "bfloat16"
+
+  vlm:
+    checkpoint_path: "/home/ma-user/work/wx1513998/pretrained_models/Qwen3-VL-2B-Instruct"
+    precision: "bfloat16"
+    frozen: false
+
+  qwen3_expert:
+    vlm_dim: 2048
+    head_dim: 128
+    num_heads: 24
+    num_layers: 30
+    norm_eps: 1e-5
+
+  action_expert:
+    hidden_size: 1024
+    ffn_dim_multiplier: 4
+    norm_eps: 1e-5
+
+  time_distribution:
+    timestep_sample_method: "logit_normal"
+    sigmoid_scale: 1.0
+    min_t: 0.0
+    max_t: 1.0
+
+  training_mode: "finetune"
+
+  inference:
+    num_inference_timesteps: 10
+
+  loss_weights:
+    video_loss_weight: 1.0
+    action_loss_weight: 1.0
+
+  ema:
+    enabled: false
+    update_after_step: 0
+    inv_gamma: 1.0
+    power: 0.75
+    min_value: 0.0
+    max_value: 0.9999
+
+training:
+  batch_size: 8
+  max_steps: 80000
+  learning_rate: 5.0e-5
+  wan_learning_rate: 5.0e-5
+  vlm_learning_rate: 5.0e-5
+  weight_decay: 0.01
+  gradient_accumulation_steps: 1
+
+  scheduler_type: "linear"
+  warmup_steps: 200
+  cycle_length: 5000000
+  f_max: 0.99
+  f_min: 0.4
+
+  grad_clip_norm: 0.5
+  use_amp: true
+  find_unused_parameters: false
+
+system:
+  checkpoint_dir: "/home/ma-user/work/wx1513998/checkpoints/eai_pick_place_ewam"
+  log_level: "INFO"
+
+  log_interval: 1
+  save_interval: 10000
+  val_interval: 500
+
+  num_workers: 16
+  pin_memory: true
+
+logging:
+  report_to: "tensorboard"
+  wandb_project: "motus-wan-vlm"
+  tensorboard_log_dir: "/home/ma-user/work/wx1513998/checkpoints/tensorboard_eai_pick_place_ewam"
+  run_name: null
+
+resume:
+  checkpoint_path: null
+
+finetune:
+  checkpoint_path: "/home/ma-user/work/wx1513998/checkpoints/88"
