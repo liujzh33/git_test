@@ -27,10 +27,10 @@ export MOTUS_COMPILE=0
 
 # ==================== PATHS (modify these) ====================
 # --- Model weights ---
-CHECKPOINT_PATH="/home/robo/pretrained_models/ckpts/eai_pick_place/mp_rank_00_model_states.pt"
-WAN_PATH="/home/robo/pretrained_models/Wan2.2-TI2V-5B"
-VLM_PATH="/home/robo/pretrained_models/Qwen3-VL-2B-Instruct"
-T5_CACHE_DIR="/home/robo/pretrained_models/t5_cache_eai_pick_place"
+CHECKPOINT_PATH="/home/ma-user/work/wx1513998/checkpoints/eai_pick_place_ewam/eai_pick_place_wan_vlm_mask/eai_pick_place_wan_vlm_mask/checkpoint_step_20000/pytorch_model/mp_rank_00_model_states.pt"
+WAN_PATH="/home/ma-user/work/wx1513998/pretrained_models/Wan2.2-TI2V-5B"
+VLM_PATH="/home/ma-user/work/wx1513998/pretrained_models/Qwen3-VL-2B-Instruct"
+T5_CACHE_DIR="/home/ma-user/work/wx1513998/data/EAI_DATA/2026-09-11-153200/pick_place_100_ewam/t5_cache"
 
 # --- Config (ships with the bundle, edit paths inside it too) ---
 CONFIG_PATH="$BUNDLE_ROOT/configs/eai_pick_place_wan_vlm_mask.yaml"
@@ -47,13 +47,9 @@ PORT=5555
 NUM_INFERENCE_STEPS=10
 # =========================================================
 
-# --- Detect conda ---
-if command -v conda &>/dev/null; then
-    if conda env list 2>/dev/null | grep -q "inference_motus"; then
-        eval "$(conda shell.bash hook)"
-        conda activate inference_motus
-    fi
-fi
+# --- Activate conda ---
+source /root/miniconda3/etc/profile.d/conda.sh
+conda activate motus
 
 echo "[server] Starting MotusV2 inference server"
 echo "[server] Checkpoint: $CHECKPOINT_PATH"
