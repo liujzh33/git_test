@@ -1,0 +1,11 @@
+numpy
+matplotlib
+pandas
+openpyxl
+nibabel
+SimpleITK
+scikit-image
+scipy
+Pillow
+requests
+pyarrow
